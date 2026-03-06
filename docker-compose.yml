@@ -2,9 +2,9 @@
 # Standalone Guardian deployment — no LegionForge framework required.
 # Brings its own PostgreSQL for when Guardian is deployed independently.
 #
-# Usage:
-#   GUARDIAN_DB_PASSWORD=changeme docker compose -f packages/guardian/docker-compose.yml up -d
-#   psql postgresql://guardian:changeme@localhost:5433/guardian -f packages/guardian/init.sql
+# Usage (standalone repo or from packages/guardian/ in the monorepo):
+#   GUARDIAN_DB_PASSWORD=changeme docker compose up -d
+#   curl http://localhost:9766/health
 #
 # When deploying ALONGSIDE LegionForge, use the root docker-compose.yml instead
 # (which connects Guardian to LegionForge's existing PostgreSQL).
@@ -12,10 +12,10 @@
 services:
   guardian:
     build:
-      context: ../..
-      dockerfile: packages/guardian/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "9766:9766"
+      - "${GUARDIAN_PORT:-9766}:9766"
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
