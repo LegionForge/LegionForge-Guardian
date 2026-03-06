@@ -1,0 +1,50 @@
+# packages/guardian/docker-compose.yml
+# Standalone Guardian deployment — no LegionForge framework required.
+# Brings its own PostgreSQL for when Guardian is deployed independently.
+#
+# Usage:
+#   GUARDIAN_DB_PASSWORD=changeme docker compose -f packages/guardian/docker-compose.yml up -d
+#   psql postgresql://guardian:changeme@localhost:5433/guardian -f packages/guardian/init.sql
+#
+# When deploying ALONGSIDE LegionForge, use the root docker-compose.yml instead
+# (which connects Guardian to LegionForge's existing PostgreSQL).
+
+services:
+  guardian:
+    build:
+      context: ../..
+      dockerfile: packages/guardian/Dockerfile
+    ports:
+      - "9766:9766"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: guardian
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: ${GUARDIAN_DB_PASSWORD:?GUARDIAN_DB_PASSWORD required}
+      TASK_TOKEN_SECRET: ${TASK_TOKEN_SECRET:-}
+      GUARDIAN_REQUIRE_AUTH: ${GUARDIAN_REQUIRE_AUTH:-true}
+      TASK_TOKEN_ISSUER: ${TASK_TOKEN_ISSUER:-legionforge}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: guardian
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: ${GUARDIAN_DB_PASSWORD:?GUARDIAN_DB_PASSWORD required}
+    volumes:
+      - guardian_db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  guardian_db_data:
