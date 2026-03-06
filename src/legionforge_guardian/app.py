@@ -368,28 +368,35 @@ _GUARDIAN_REQUIRE_AUTH: bool = (
 )
 
 
-def _check_bearer_auth(request: Request) -> bool:
+def _check_bearer_auth(request: Request) -> bool | str:
     """
     Verify the Authorization: Bearer header against TASK_TOKEN_SECRET.
 
     Returns True if:
-      - GUARDIAN_REQUIRE_AUTH is false (auth disabled — backward compat), OR
-      - TASK_TOKEN_SECRET is empty (not configured — fail-open with a warning), OR
+      - GUARDIAN_REQUIRE_AUTH is false (auth disabled — local dev only), OR
       - The provided token matches TASK_TOKEN_SECRET via constant-time compare.
 
+    Returns "misconfigured" if auth is required but TASK_TOKEN_SECRET is unset.
     Returns False if auth is required and the token is missing or wrong.
+
     Uses hmac.compare_digest for constant-time comparison to prevent
     timing-based token enumeration attacks.
+
+    FAIL-CLOSED: When GUARDIAN_REQUIRE_AUTH=true and TASK_TOKEN_SECRET is empty,
+    this returns "misconfigured" so callers return 503. Prevents silently
+    unauthenticated deployments — misconfigured Guardian must never behave as
+    if auth is disabled.
     """
     if not _GUARDIAN_REQUIRE_AUTH:
-        return True  # Auth not required
+        return True  # Auth not required (local dev)
 
     if not _GUARDIAN_AUTH_TOKEN:
-        logger.warning(
-            "[guardian] GUARDIAN_REQUIRE_AUTH=true but TASK_TOKEN_SECRET is empty — "
-            "allowing request (configure TASK_TOKEN_SECRET to enforce auth)"
+        logger.error(
+            "[guardian] GUARDIAN_REQUIRE_AUTH=true but TASK_TOKEN_SECRET is not set — "
+            "refusing request. Set TASK_TOKEN_SECRET or set GUARDIAN_REQUIRE_AUTH=false "
+            "for local development."
         )
-        return True
+        return "misconfigured"
 
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -988,7 +995,16 @@ async def rules(http_request: Request) -> JSONResponse:
     Useful for debugging and audit.
     Requires Bearer auth when GUARDIAN_REQUIRE_AUTH=true.
     """
-    if not _check_bearer_auth(http_request):
+    _auth = _check_bearer_auth(http_request)
+    if _auth == "misconfigured":
+        return JSONResponse(
+            {
+                "detail": "Guardian misconfigured: TASK_TOKEN_SECRET not set",
+                "error": "misconfigured",
+            },
+            status_code=503,
+        )
+    if not _auth:
         return _unauthorized("Bearer token required for /rules")
     await _maybe_refresh_caches()
     return JSONResponse(
@@ -1013,7 +1029,17 @@ async def check(
     Seven checks in order (Phase 4: +check_6 adaptive rules), fail-fast. NO LLM calls.
     Requires Bearer auth when GUARDIAN_REQUIRE_AUTH=true.
     """
-    if not _check_bearer_auth(http_request):
+    _auth = _check_bearer_auth(http_request)
+    if _auth == "misconfigured":
+        # Fail-safe: misconfiguration → halt (never silently allow on the security hot path)
+        return GuardianCheckResponse(
+            allowed=False,
+            tier="halt",
+            reason="Guardian misconfigured: TASK_TOKEN_SECRET not set — refusing all checks",
+            threat_type="GUARDIAN_MISCONFIGURED",
+            confidence=1.0,
+        )
+    if not _auth:
         # Fail-safe: auth failure → halt (never fail-open on the security hot path)
         return GuardianCheckResponse(
             allowed=False,
