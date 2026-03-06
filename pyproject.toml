@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legionforge-guardian"
+version = "0.1.0"
+description = "Deterministic security sidecar for LLM agent frameworks"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "John Paul Cruz", email = "jp@legionforge.org"},
+]
+keywords = ["security", "llm", "agent", "sidecar", "guardian"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.0",
+    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
+    "PyJWT>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "black>=24.0",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/LegionForge/legionforge-guardian"
+Documentation = "https://github.com/LegionForge/legionforge-guardian#readme"
+"Bug Tracker" = "https://github.com/LegionForge/legionforge-guardian/issues"
+
+[project.scripts]
+legionforge-guardian = "legionforge_guardian.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
