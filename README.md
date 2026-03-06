@@ -48,13 +48,16 @@ All checks run in order. First failure halts or sandboxes immediately. No LLM ca
 git clone https://github.com/LegionForge/legionforge-guardian
 cd legionforge-guardian
 
-# Start Guardian + its own PostgreSQL
+# Start Guardian + its own PostgreSQL (init.sql runs automatically)
 GUARDIAN_DB_PASSWORD=changeme docker compose up -d
 
 # Verify it's running
 curl http://localhost:9766/health
 # {"status": "ok", "service": "guardian", "version": "4.0.0"}
 ```
+
+> **Port conflict?** If port 9766 is already in use, override it:
+> `GUARDIAN_PORT=9767 GUARDIAN_DB_PASSWORD=changeme docker compose up -d`
 
 ---
 
