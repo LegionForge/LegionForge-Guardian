@@ -45,8 +45,8 @@ All checks run in order. First failure halts or sandboxes immediately. No LLM ca
 ## Quickstart (Docker Compose — 30 seconds)
 
 ```bash
-git clone https://github.com/LegionForge/legionforge-guardian
-cd legionforge-guardian
+git clone https://github.com/LegionForge/LegionForge-Guardian
+cd LegionForge-Guardian
 
 # Start Guardian + its own PostgreSQL (init.sql runs automatically)
 GUARDIAN_DB_PASSWORD=changeme docker compose up -d
