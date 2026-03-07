@@ -24,9 +24,9 @@ RUN mkdir -p /app/logs && chown -R guardian:guardian /app
 
 USER guardian
 
-EXPOSE 9766
+EXPOSE ${GUARDIAN_PORT:-9766}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9766/health')"
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('GUARDIAN_PORT', '9766') + '/health')"
 
 CMD ["python", "-m", "legionforge_guardian"]
