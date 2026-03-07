@@ -15,7 +15,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${GUARDIAN_PORT:-9766}:9766"
+      - "${GUARDIAN_PORT:-9766}:${GUARDIAN_PORT:-9766}"
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
@@ -25,6 +25,8 @@ services:
       TASK_TOKEN_SECRET: ${TASK_TOKEN_SECRET:-}
       GUARDIAN_REQUIRE_AUTH: ${GUARDIAN_REQUIRE_AUTH:-true}
       TASK_TOKEN_ISSUER: ${TASK_TOKEN_ISSUER:-legionforge}
+      GUARDIAN_PORT: ${GUARDIAN_PORT:-9766}
+      GUARDIAN_HOST: "0.0.0.0"
     depends_on:
       db:
         condition: service_healthy

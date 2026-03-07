@@ -1185,7 +1185,9 @@ def main() -> None:
     """Entry point for `legionforge-guardian` CLI and `python -m legionforge_guardian`."""
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=9766, log_level="info")
+    host = os.environ.get("GUARDIAN_HOST", "0.0.0.0")
+    port = int(os.environ.get("GUARDIAN_PORT", "9766"))
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
