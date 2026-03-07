@@ -6,18 +6,7 @@ This project uses [semantic versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
-
-### Fixed
-- Uvicorn now binds to `0.0.0.0` by default (was `127.0.0.1`) — required for Docker port
-  mapping to work from the host. Configurable via `GUARDIAN_HOST` env var.
-- `GUARDIAN_PORT` env var now controls both the listening port and the Docker port mapping.
-  Default remains `9766`. Override: `GUARDIAN_PORT=9767 docker compose up -d`.
-- Docker healthcheck reads `GUARDIAN_PORT` from environment.
-
----
-
-## [0.1.0] — 2026-03-06
+## [0.1.0] — 2026-03-07
 
 Initial public release, extracted from [LegionForge](https://github.com/LegionForge/LegionForge).
 
@@ -61,6 +50,17 @@ Initial public release, extracted from [LegionForge](https://github.com/LegionFo
 - Fail-closed when auth is required but secret is not configured (503, not 200)
 
 **Validated against 24 adversarial attack functions — 0 bypasses.**
+
+**Live integration test suite:**
+- `tests/test_live.py` — 9 HTTP tests against a real running instance (health, registry,
+  capability boundary, destructive patterns, concurrent burst)
+- `make test-guardian-live` — full Docker lifecycle: build → wait → test → teardown
+
+### Fixed
+- Uvicorn binds to `0.0.0.0` (configurable via `GUARDIAN_HOST`) — required for Docker
+  port mapping to work from the host
+- `GUARDIAN_PORT` env var controls both listening port and Docker port mapping (default `9766`)
+- Docker healthcheck reads `GUARDIAN_PORT` from environment
 
 ### Architecture notes
 
