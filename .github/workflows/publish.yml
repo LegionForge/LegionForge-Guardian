@@ -1,0 +1,48 @@
+name: Publish to PyPI
+
+# Triggered when a version tag (v*) is pushed to the guardian repo.
+# This workflow lives in packages/guardian/ and is synced there via the
+# subtree push — it runs inside the legionforge-guardian repo, not LegionForge.
+#
+# Prerequisites (one-time setup):
+#   1. Create a PyPI API token scoped to legionforge-guardian
+#   2. Store it as PYPI_API_TOKEN in LegionForge/legionforge-guardian repo secrets
+#
+# To cut a release:
+#   # In the guardian repo (after sync):
+#   git tag v0.1.0 -m "Initial public release"
+#   git push origin v0.1.0
+#   # This workflow triggers automatically
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # for OIDC trusted publishing (alternative to API token)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: pip install build twine
+
+      - name: Build distribution
+        run: python -m build
+
+      - name: Verify distribution
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
