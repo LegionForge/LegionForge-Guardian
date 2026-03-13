@@ -48,6 +48,27 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+# ── Module-level startup timestamp (for uptime_seconds in /health) ────────────
+_startup_time: float = time.monotonic()
+
+# ── In-memory Prometheus-style counters (for /metrics endpoint) ───────────────
+_metrics: dict[str, int] = {
+    "checks_allow": 0,
+    "checks_halt": 0,
+    "checks_sandbox": 0,
+    "threat_TOOL_REVOKED": 0,
+    "threat_CAPABILITY_VIOLATION": 0,
+    "threat_INJECTION_DETECTED": 0,
+    "threat_TOOL_HASH_MISMATCH": 0,
+    "threat_DESTRUCTIVE_PATTERN": 0,
+    "threat_SEQUENCE_VIOLATION": 0,
+    "threat_INVALID_TASK_TOKEN": 0,
+    "threat_TOOL_SCOPE_VIOLATION": 0,
+    "threat_GUARDIAN_MISCONFIGURED": 0,
+    "threat_GUARDIAN_AUTH_FAILURE": 0,
+    "threat_CANARY_TRIGGERED": 0,
+}
+
 import jwt
 
 import httpx
@@ -979,13 +1000,128 @@ def _check_6_adaptive_rules(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
+@app.post("/invalidate-cache")
+async def invalidate_cache(http_request: Request) -> JSONResponse:
+    """
+    Force an immediate cache refresh — bypasses the 10s TTL.
+    Admin-only: requires the same Bearer token as /check.
+    Use after revoking a tool to propagate revocation instantly.
+    """
+    _auth = _check_bearer_auth(http_request)
+    if _auth == "misconfigured":
+        return JSONResponse(
+            {
+                "detail": "Guardian misconfigured: TASK_TOKEN_SECRET not set",
+                "error": "misconfigured",
+            },
+            status_code=503,
+        )
+    if not _auth:
+        return _unauthorized("Bearer token required for /invalidate-cache")
+
+    await _refresh_caches()
+    return JSONResponse(
+        {
+            "status": "ok",
+            "message": "Cache refreshed",
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     """
     Unauthenticated liveness check.
     Used by Docker healthcheck and make check.
+
+    Returns a richer payload including:
+      - db_reachable: cheap SELECT 1 against the Guardian DB
+      - cache_age_seconds: seconds since last cache refresh
+      - tools_registered: count of approved tools in cache
+      - rules_active: count of APPROVED adaptive rules
+      - uptime_seconds: seconds since module load
+      - status: "ok" or "degraded" (db unreachable OR cache stale > 30s)
     """
-    return JSONResponse({"status": "ok", "service": "guardian", "version": "4.0.0"})
+    # ── DB reachability check (cheap SELECT 1) ───────────────────────────────
+    db_reachable = False
+    try:
+        import psycopg
+
+        conninfo, password = _guardian_db_conninfo()
+        async with await psycopg.AsyncConnection.connect(
+            conninfo, password=password, connect_timeout=3
+        ) as conn:
+            await conn.execute("SELECT 1")
+        db_reachable = True
+    except Exception as exc:
+        logger.debug(f"[guardian/health] DB reachability check failed: {exc}")
+
+    cache_age = round(time.monotonic() - _cache_last_refreshed, 2)
+    uptime = round(time.monotonic() - _startup_time, 2)
+    rules_active = sum(
+        1 for r in _adaptive_rules if r.get("status", "APPROVED") == "APPROVED"
+    )
+    # _adaptive_rules only contains APPROVED rules (filtered in _refresh_caches query)
+    # so len() is the active count
+    rules_active = len(_adaptive_rules)
+
+    degraded = (not db_reachable) or (cache_age > 30)
+    status = "degraded" if degraded else "ok"
+
+    return JSONResponse(
+        {
+            "status": status,
+            "version": "4.0.0",
+            "cache_age_seconds": cache_age,
+            "db_reachable": db_reachable,
+            "tools_registered": len(_approved_tools),
+            "rules_active": rules_active,
+            "uptime_seconds": uptime,
+        }
+    )
+
+
+@app.get("/metrics")
+async def metrics() -> JSONResponse:
+    """
+    Prometheus text format metrics. Unauthenticated (consistent with main app /metrics).
+    No prometheus_client dependency — text is formatted manually.
+    """
+    from fastapi.responses import Response
+
+    cache_age = round(time.monotonic() - _cache_last_refreshed, 2)
+
+    lines: list[str] = [
+        "# HELP guardian_checks_total Total tool checks processed",
+        "# TYPE guardian_checks_total counter",
+        f'guardian_checks_total{{result="allow"}} {_metrics["checks_allow"]}',
+        f'guardian_checks_total{{result="halt"}} {_metrics["checks_halt"]}',
+        f'guardian_checks_total{{result="sandbox"}} {_metrics["checks_sandbox"]}',
+        "",
+        "# HELP guardian_threat_events_total Threat events by type",
+        "# TYPE guardian_threat_events_total counter",
+        f'guardian_threat_events_total{{type="TOOL_REVOKED"}} {_metrics["threat_TOOL_REVOKED"]}',
+        f'guardian_threat_events_total{{type="CAPABILITY_VIOLATION"}} {_metrics["threat_CAPABILITY_VIOLATION"]}',
+        f'guardian_threat_events_total{{type="INJECTION_DETECTED"}} {_metrics["threat_INJECTION_DETECTED"]}',
+        f'guardian_threat_events_total{{type="TOOL_HASH_MISMATCH"}} {_metrics["threat_TOOL_HASH_MISMATCH"]}',
+        f'guardian_threat_events_total{{type="DESTRUCTIVE_PATTERN"}} {_metrics["threat_DESTRUCTIVE_PATTERN"]}',
+        f'guardian_threat_events_total{{type="SEQUENCE_VIOLATION"}} {_metrics["threat_SEQUENCE_VIOLATION"]}',
+        f'guardian_threat_events_total{{type="INVALID_TASK_TOKEN"}} {_metrics["threat_INVALID_TASK_TOKEN"]}',
+        f'guardian_threat_events_total{{type="TOOL_SCOPE_VIOLATION"}} {_metrics["threat_TOOL_SCOPE_VIOLATION"]}',
+        f'guardian_threat_events_total{{type="GUARDIAN_MISCONFIGURED"}} {_metrics["threat_GUARDIAN_MISCONFIGURED"]}',
+        f'guardian_threat_events_total{{type="GUARDIAN_AUTH_FAILURE"}} {_metrics["threat_GUARDIAN_AUTH_FAILURE"]}',
+        f'guardian_threat_events_total{{type="CANARY_TRIGGERED"}} {_metrics["threat_CANARY_TRIGGERED"]}',
+        "",
+        "# HELP guardian_cache_refresh_age_seconds Seconds since last DB cache refresh",
+        "# TYPE guardian_cache_refresh_age_seconds gauge",
+        f"guardian_cache_refresh_age_seconds {cache_age}",
+        "",
+    ]
+    body = "\n".join(lines)
+    return Response(
+        content=body, media_type="text/plain; version=0.0.4", status_code=200
+    )
 
 
 @app.get("/rules")
@@ -1032,21 +1168,25 @@ async def check(
     _auth = _check_bearer_auth(http_request)
     if _auth == "misconfigured":
         # Fail-safe: misconfiguration → halt (never silently allow on the security hot path)
-        return GuardianCheckResponse(
-            allowed=False,
-            tier="halt",
-            reason="Guardian misconfigured: TASK_TOKEN_SECRET not set — refusing all checks",
-            threat_type="GUARDIAN_MISCONFIGURED",
-            confidence=1.0,
+        return _record_check_metrics(
+            GuardianCheckResponse(
+                allowed=False,
+                tier="halt",
+                reason="Guardian misconfigured: TASK_TOKEN_SECRET not set — refusing all checks",
+                threat_type="GUARDIAN_MISCONFIGURED",
+                confidence=1.0,
+            )
         )
     if not _auth:
         # Fail-safe: auth failure → halt (never fail-open on the security hot path)
-        return GuardianCheckResponse(
-            allowed=False,
-            tier="halt",
-            reason="Guardian auth required — missing or invalid Bearer token",
-            threat_type="GUARDIAN_AUTH_FAILURE",
-            confidence=1.0,
+        return _record_check_metrics(
+            GuardianCheckResponse(
+                allowed=False,
+                tier="halt",
+                reason="Guardian auth required — missing or invalid Bearer token",
+                threat_type="GUARDIAN_AUTH_FAILURE",
+                confidence=1.0,
+            )
         )
     await _maybe_refresh_caches()
 
@@ -1057,7 +1197,7 @@ async def check(
             f"[guardian/check] HALT check=0 tool={request.tool_id!r} "
             f"agent={request.agent_id!r} threat={resp.threat_type!r}"
         )
-        return resp
+        return _record_check_metrics(resp)
 
     # 1. Tool registry
     resp = _check_1_tool_registry(request.tool_id)
@@ -1066,7 +1206,36 @@ async def check(
             f"[guardian/check] HALT check=1 tool={request.tool_id!r} "
             f"agent={request.agent_id!r} reason={resp.reason!r}"
         )
-        return resp
+        return _record_check_metrics(resp)
+
+    # Canary check: guardian_canary should never be called by legitimate code.
+    # Passing check 1 means it IS in the approved registry (seeded by init.sql).
+    # Any call to it is immediate evidence of a probing attack or hallucination.
+    if request.tool_id == "guardian_canary":
+        logger.warning(
+            f"[guardian/check] CANARY_TRIGGERED agent={request.agent_id!r} "
+            f"run={request.run_id!r}"
+        )
+        asyncio.create_task(
+            _write_threat_event_direct(
+                agent_id=request.agent_id,
+                run_id=request.run_id,
+                threat_type="CANARY_TRIGGERED",
+                confidence=1.0,
+                raw_input=str(request.args)[:500],
+                action_taken="halt",
+                metadata={"tool_id": request.tool_id},
+            )
+        )
+        return _record_check_metrics(
+            GuardianCheckResponse(
+                allowed=False,
+                tier="halt",
+                reason="canary_triggered",
+                threat_type="CANARY_TRIGGERED",
+                confidence=1.0,
+            )
+        )
 
     # 2. Capability boundary (Gap 2 fix: also pass tool_id)
     resp = _check_2_capability_boundary(request.action, request.tool_id)
@@ -1075,12 +1244,13 @@ async def check(
             f"[guardian/check] HALT check=2 action={request.action!r} "
             f"tool={request.tool_id!r} agent={request.agent_id!r}"
         )
-        return resp
+        return _record_check_metrics(resp)
 
     # 3. Destructive pattern
     resp, log_only = _check_3_destructive_pattern(request.tool_id, request.args)
     if log_only:
         # LOG tier — allow to proceed, record in threat_events asynchronously
+        _metrics["threat_DESTRUCTIVE_PATTERN"] += 1
         asyncio.create_task(
             _write_threat_event_direct(
                 agent_id=request.agent_id,
@@ -1112,7 +1282,7 @@ async def check(
                 },
             )
         )
-        return resp
+        return _record_check_metrics(resp)
 
     # 4. Sequence check
     resp = _check_4_sequence(request.agent_id, request.tool_id, request.sequence_so_far)
@@ -1121,7 +1291,7 @@ async def check(
             f"[guardian/check] SANDBOX check=4 tool={request.tool_id!r} "
             f"agent={request.agent_id!r} seq={request.sequence_so_far}"
         )
-        return resp
+        return _record_check_metrics(resp)
 
     # 5. Hash integrity
     resp = _check_5_hash_integrity(request.tool_id, request.args)
@@ -1130,7 +1300,7 @@ async def check(
             f"[guardian/check] HALT check=5 tool={request.tool_id!r} "
             f"agent={request.agent_id!r} reason={resp.reason!r}"
         )
-        return resp
+        return _record_check_metrics(resp)
 
     # 6. Adaptive rules (Phase 4) — approved rules proposed by Threat Analyst.
     # Applied AFTER all static checks. Rules are hot-loaded from DB every 60s.
@@ -1143,14 +1313,28 @@ async def check(
             f"tool={request.tool_id!r} agent={request.agent_id!r} "
             f"rule_type={resp.threat_type!r}"
         )
-        return resp
+        return _record_check_metrics(resp)
 
-    return GuardianCheckResponse(
+    result = GuardianCheckResponse(
         allowed=True,
         tier="allow",
         reason="All checks passed",
         confidence=1.0,
     )
+    _metrics["checks_allow"] += 1
+    return result
+
+
+def _record_check_metrics(resp: GuardianCheckResponse) -> GuardianCheckResponse:
+    """Increment counters for a blocking check result and return the response unchanged."""
+    if resp.tier == "halt":
+        _metrics["checks_halt"] += 1
+    elif resp.tier == "sandbox":
+        _metrics["checks_sandbox"] += 1
+    threat_key = f"threat_{resp.threat_type}" if resp.threat_type else None
+    if threat_key and threat_key in _metrics:
+        _metrics[threat_key] += 1
+    return resp
 
 
 @app.post("/report")
@@ -1185,7 +1369,7 @@ def main() -> None:
     """Entry point for `legionforge-guardian` CLI and `python -m legionforge_guardian`."""
     import uvicorn
 
-    host = os.environ.get("GUARDIAN_HOST", "0.0.0.0")
+    host = os.environ.get("GUARDIAN_HOST", "127.0.0.1")
     port = int(os.environ.get("GUARDIAN_PORT", "9766"))
     uvicorn.run(app, host=host, port=port, log_level="info")
 
