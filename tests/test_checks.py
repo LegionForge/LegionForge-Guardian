@@ -15,6 +15,8 @@ Coverage:
   _check_bearer_auth      — auth fail-closed behaviour
 """
 
+import asyncio
+
 import legionforge_guardian.app as _app
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -384,3 +386,114 @@ def test_auth_accepts_correct_token(monkeypatch):
         headers = {"authorization": "Bearer my-secret"}
 
     assert _app._check_bearer_auth(_FakeRequest()) is True
+
+
+# ── /health response shape ────────────────────────────────────────────────────
+
+
+def test_health_response_contains_required_fields(monkeypatch):
+    """
+    /health must return cache_age_seconds, db_reachable, tools_registered,
+    rules_active, uptime_seconds, version, and status.
+    No actual DB connection — we patch the psycopg import to fail so
+    db_reachable=False and verify the degraded logic.
+    """
+    import time
+
+    monkeypatch.setattr(_app, "_cache_last_refreshed", time.monotonic())
+    monkeypatch.setattr(_app, "_approved_tools", {"web_search": {}, "code_execute": {}})
+    monkeypatch.setattr(_app, "_adaptive_rules", [])
+
+    import asyncio
+    import importlib
+
+    # Patch psycopg inside _app to raise so db_reachable=False
+    import sys
+
+    real_psycopg = sys.modules.get("psycopg")
+    # Temporarily remove psycopg so the import inside health() raises
+    sys.modules["psycopg"] = None  # type: ignore[assignment]
+    try:
+        result = asyncio.get_event_loop().run_until_complete(_app.health())
+    finally:
+        if real_psycopg is not None:
+            sys.modules["psycopg"] = real_psycopg
+        elif "psycopg" in sys.modules:
+            del sys.modules["psycopg"]
+
+    body = result.body
+    import json
+
+    data = json.loads(body)
+    assert "cache_age_seconds" in data, f"Missing cache_age_seconds: {data}"
+    assert "db_reachable" in data, f"Missing db_reachable: {data}"
+    assert "tools_registered" in data, f"Missing tools_registered: {data}"
+    assert "rules_active" in data, f"Missing rules_active: {data}"
+    assert "uptime_seconds" in data, f"Missing uptime_seconds: {data}"
+    assert "version" in data, f"Missing version: {data}"
+    assert "status" in data, f"Missing status: {data}"
+    assert data["tools_registered"] == 2
+    assert data["db_reachable"] is False
+    assert data["status"] == "degraded"
+
+
+# ── /metrics endpoint ─────────────────────────────────────────────────────────
+
+
+def test_metrics_endpoint_returns_prometheus_text(monkeypatch):
+    """
+    /metrics returns text/plain Prometheus format with all three counter families.
+    Verifies keys are present and values are integers.
+    """
+    # Zero out metrics for predictable test output
+    monkeypatch.setattr(
+        _app,
+        "_metrics",
+        {k: 0 for k in _app._metrics},
+    )
+
+    result = asyncio.get_event_loop().run_until_complete(_app.metrics())
+
+    assert result.status_code == 200
+    assert "text/plain" in result.media_type
+    body = result.body.decode()
+    assert "guardian_checks_total" in body
+    assert 'result="allow"' in body
+    assert 'result="halt"' in body
+    assert 'result="sandbox"' in body
+    assert "guardian_threat_events_total" in body
+    assert "guardian_cache_refresh_age_seconds" in body
+
+
+def test_record_check_metrics_increments_halt(monkeypatch):
+    """_record_check_metrics increments halt counter and returns the response."""
+    saved = dict(_app._metrics)
+    monkeypatch.setattr(_app, "_metrics", {k: 0 for k in _app._metrics})
+
+    resp = _app.GuardianCheckResponse(
+        allowed=False,
+        tier="halt",
+        reason="test",
+        threat_type="TOOL_REVOKED",
+        confidence=1.0,
+    )
+    result = _app._record_check_metrics(resp)
+    assert result is resp
+    assert _app._metrics["checks_halt"] == 1
+    assert _app._metrics["threat_TOOL_REVOKED"] == 1
+
+
+def test_record_check_metrics_increments_sandbox(monkeypatch):
+    """_record_check_metrics increments sandbox counter."""
+    monkeypatch.setattr(_app, "_metrics", {k: 0 for k in _app._metrics})
+
+    resp = _app.GuardianCheckResponse(
+        allowed=False,
+        tier="sandbox",
+        reason="test",
+        threat_type="SEQUENCE_VIOLATION",
+        confidence=1.0,
+    )
+    _app._record_check_metrics(resp)
+    assert _app._metrics["checks_sandbox"] == 1
+    assert _app._metrics["threat_SEQUENCE_VIOLATION"] == 1
