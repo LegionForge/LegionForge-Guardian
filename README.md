@@ -211,7 +211,12 @@ Always unauthenticated. Used by Docker healthcheck.
 | `GUARDIAN_DB_PASSWORD` | *(required)* | Database password |
 | `TASK_TOKEN_SECRET` | *(required when auth enabled)* | Bearer token for /check and /rules |
 | `GUARDIAN_REQUIRE_AUTH` | `true` | Set `false` for local dev only |
+| `GUARDIAN_HOST` | `127.0.0.1` | Bind address (see note below) |
 | `GUARDIAN_PORT` | `9766` | Listening port |
+
+**Production note:** Guardian defaults to `127.0.0.1` (localhost only). When running
+in Docker, set `GUARDIAN_HOST=0.0.0.0` to allow the container's port mapping to work.
+Never expose Guardian's port publicly — it must only be reachable by the agent process.
 
 **Security note:** When `GUARDIAN_REQUIRE_AUTH=true`, `TASK_TOKEN_SECRET` must be set.
 Guardian will refuse requests with 503 if auth is required but no secret is configured.

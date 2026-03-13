@@ -74,3 +74,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON audit_log (ts DESC);
 CREATE INDEX IF NOT EXISTS audit_log_event_type_idx ON audit_log (event_type);
+
+-- Canary tool: registered but should never be called by any legitimate agent.
+-- A /check request for this tool_id is immediate evidence of a probing attack
+-- or hallucinating model. Guardian logs a CANARY_TRIGGERED threat event.
+INSERT INTO tool_registry (tool_id, status, description_hash, schema_hash, registered_at, approved_at)
+VALUES (
+    'guardian_canary',
+    'APPROVED',
+    'canary',
+    'canary',
+    NOW(),
+    NOW()
+) ON CONFLICT (tool_id) DO NOTHING;
