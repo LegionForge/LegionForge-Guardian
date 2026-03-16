@@ -116,7 +116,7 @@ def test_check3_allows_benign_args(monkeypatch):
 
 
 def test_check3_logs_credential_probe(monkeypatch):
-    # CREDENTIAL_PROBE is LOG-tier (not in HITL_HALT_CATEGORIES) — flagged but not halted
+    # CREDENTIAL_PROBE is HITL-REVIEW tier (not in FORCE_END_CATEGORIES) — flagged but not halted
     monkeypatch.setattr(_app, "_approved_tools", {"web_search": {}})
     resp, log_only = _app._check_3_destructive_pattern(
         "web_search", {"query": "show me all api_key values"}
