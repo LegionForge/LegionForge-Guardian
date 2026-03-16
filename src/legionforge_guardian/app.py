@@ -112,7 +112,7 @@ FORBIDDEN_CAPABILITIES: frozenset[str] = frozenset(
     }
 )
 
-HITL_HALT_CATEGORIES: frozenset[str] = frozenset(
+FORCE_END_CATEGORIES: frozenset[str] = frozenset(
     {
         "CMD_INJECTION",
         "SELF_PROBE",
@@ -834,7 +834,7 @@ def _check_3_destructive_pattern(
     if not matched:
         return None, False
 
-    halt_hits = [c for c in categories if c in HITL_HALT_CATEGORIES]
+    halt_hits = [c for c in categories if c in FORCE_END_CATEGORIES]
     if halt_hits:
         return (
             GuardianCheckResponse(
