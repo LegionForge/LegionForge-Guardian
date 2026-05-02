@@ -41,9 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/LegionForge/legionforge-guardian"
-Documentation = "https://github.com/LegionForge/legionforge-guardian#readme"
-"Bug Tracker" = "https://github.com/LegionForge/legionforge-guardian/issues"
+Homepage = "https://github.com/LegionForge/guardian"
+Documentation = "https://github.com/LegionForge/guardian#readme"
+"Bug Tracker" = "https://github.com/LegionForge/guardian/issues"
 
 [project.scripts]
 legionforge-guardian = "legionforge_guardian.app:main"
